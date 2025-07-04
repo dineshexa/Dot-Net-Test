@@ -1,0 +1,92 @@
+name: Reusable DotNet Workflow
+
+on:
+  workflow_call:
+    inputs:
+      command:
+        description: 'Comma-separated dotnet commands (restore, build, publish)'
+        required: true
+        type: string
+      projects:
+        description: 'Path(s) to .csproj file(s)'
+        required: true
+        type: string
+      workingDirectory:
+        description: 'Working directory; empty for repo root'
+        required: false
+        type: string
+      arguments:
+        description: 'Arguments for build and publish steps'
+        required: false
+        type: string
+      nugetConfigPath:
+        description: 'NuGet config path (used in restore only)'
+        required: false
+        type: string
+
+jobs:
+  dotnet-pipeline:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup .NET SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.x'
+
+    - name: Set working directory and project path fallback
+      id: config
+      shell: pwsh
+      run: |
+        if ("${{ inputs.workingDirectory }}" -eq "") {
+          "dir=." | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "proj=**/*.csproj" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        } else {
+          "dir=${{ inputs.workingDirectory }}" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "proj=${{ inputs.workingDirectory }}/*.csproj" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        }
+
+    - name:  DotNet Restore
+      if: contains(inputs.command, 'restore')
+      shell: pwsh
+      run: |
+        Write-Host "Finding projects to restore in ${{ steps.config.outputs.dir }}"
+        $projects = Get-ChildItem -Path "${{ steps.config.outputs.dir }}" -Recurse -Filter *.csproj | Where-Object { $_.FullName -notmatch 'Templates' }
+        foreach ($proj in $projects) {
+          Write-Host "Restoring $($proj.FullName)"
+          dotnet restore "$($proj.FullName)" --configfile "${{ inputs.nugetConfigPath }}"
+        }
+
+    - name: DotNet Build
+      if: contains(inputs.command, 'build')
+      shell: pwsh
+      run: |
+        Write-Host "Finding projects to build in ${{ steps.config.outputs.dir }}"
+        $projects = Get-ChildItem -Path "${{ steps.config.outputs.dir }}" -Recurse -Filter *.csproj | Where-Object { $_.FullName -notmatch 'Templates' }
+        foreach ($proj in $projects) {
+          Write-Host "Building $($proj.FullName)"
+          dotnet build "$($proj.FullName)" ${{ inputs.arguments }}
+        }
+
+    - name:  DotNet Publish
+      if: contains(inputs.command, 'publish')
+      shell: pwsh
+      run: |
+        Write-Host "Finding projects to publish in ${{ steps.config.outputs.dir }}"
+        $projects = Get-ChildItem -Path "${{ steps.config.outputs.dir }}" -Recurse -Filter *.csproj | Where-Object { $_.FullName -notmatch 'Templates' }
+        foreach ($proj in $projects) {
+          $name = [System.IO.Path]::GetFileNameWithoutExtension($proj.FullName)
+          $outPath = "${{ github.workspace }}\artifacts\$name"
+          Write-Host "Publishing $($proj.FullName) to $outPath"
+          dotnet publish "$($proj.FullName)" ${{ inputs.arguments }} --output "$outPath"
+        }
+
+    - name:  Upload Publish Artifacts
+      if: contains(inputs.command, 'publish')
+      uses: actions/upload-artifact@v4
+      with:
+        name: dotnet-publish-output
+        path: ${{ github.workspace }}/artifacts
