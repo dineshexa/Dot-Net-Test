@@ -1,0 +1,16 @@
+name: DotNet CI/CD Workflow
+
+on:
+  push:
+    branches: [ test ]
+  workflow_dispatch:
+
+jobs:
+  dotnet-job:
+    uses: ./.github/workflows/dotnet-workflow.yml
+    with:
+      command: 'restore,build,publish'
+      projects: '**/*.csproj'             
+      workingDirectory: ''              
+      arguments: '--configuration Release'
+      nugetConfigPath: 'nuGet.Config'
